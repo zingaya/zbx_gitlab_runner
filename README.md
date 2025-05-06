@@ -14,7 +14,3 @@ Then add this Zabbix template to the host, and adjust both macros as needed:\
 
 `{$GITLABRUNNER.METRICS.HOST}`\
 `{$GITLABRUNNER.METRICS.PORT}`
-
-## Example
-
-![gitlab_runners](docs/img/gitlab_runners.png)

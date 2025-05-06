@@ -1,0 +1,347 @@
+zabbix_export:
+  version: '7.2'
+  template_groups:
+    - uuid: 26f42bba0c4448c290fa5423bb4a2664
+      name: 'Custom Templates'
+  templates:
+    - uuid: 4050053fc78443e7a4212b90fd9b4676
+      template: 'GitLab runner by HTTP'
+      name: 'GitLab runner by HTTP'
+      groups:
+        - name: 'Custom Templates'
+      items:
+        - uuid: 30f266f03dc74590811af7fffb5aa9a3
+          name: 'Gitlab runner metrics'
+          type: HTTP_AGENT
+          key: gitlabrunner.metrics
+          delay: 0;m/1
+          history: '0'
+          value_type: TEXT
+          url: 'http://{$GITLABRUNNER.METRICS.HOST}:{$GITLABRUNNER.METRICS.PORT}/metrics'
+          tags:
+            - tag: component
+              value: raw
+          triggers:
+            - uuid: 57b846b68de74762be053d7c1cd8f97f
+              expression: 'nodata(/GitLab runner by HTTP/gitlabrunner.metrics,10m)=1'
+              name: 'Can not fetch data from gitlab runner metrics'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: ccd1417694ed4179b964d30180979416
+          name: 'Jobs failed average time'
+          type: CALCULATED
+          key: gitrunner.jobs.failed.avgtime
+          delay: 5m
+          history: 1w
+          units: s
+          params: 'truncate(avg(avg_foreach(//gitlabrunner.job.runningtime.failed[*],1w)),0)'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: gitlab-runner-job
+        - uuid: bbf6ecf328c8460e9b5364e23c8c2a67
+          name: 'Jobs in queue'
+          type: CALCULATED
+          key: gitrunner.jobs.queue
+          delay: 0;m/1s15
+          history: 1w
+          params: 'sum(last_foreach(//gitlabrunner.job.queue[*]))'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: gitlab-runner-job
+        - uuid: f7fb947d209b4570bbad8cbf95b7f76b
+          name: 'Jobs running'
+          type: CALCULATED
+          key: gitrunner.jobs.running
+          delay: 0;m/1s15
+          history: 1w
+          params: 'sum(last_foreach(//gitlabrunner.job.running[*]))'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: gitlab-runner-job
+        - uuid: 3701d9c0839d43bcbf557f19b83ddf65
+          name: 'Jobs succeded average time'
+          type: CALCULATED
+          key: gitrunner.jobs.succeded.avgtime
+          delay: 5m
+          history: 1w
+          units: s
+          params: 'truncate(avg(avg_foreach(//gitlabrunner.job.runningtime.succeeded[*],1w)),0)'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: gitlab-runner-job
+        - uuid: 5737bf88e0164c599f0beb84b06bb8ce
+          name: 'Runners available'
+          type: CALCULATED
+          key: gitrunner.runners
+          delay: 10m
+          history: 1w
+          params: 'sum(exists_foreach(//gitlabrunner.job.running[*]))'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: gitlab-runner-job
+      discovery_rules:
+        - uuid: 10d511fd42c94665ba8f847e8d4d2bdf
+          name: Runners
+          type: DEPENDENT
+          key: gitlabrunner.lld.runners
+          lifetime_type: DELETE_IMMEDIATELY
+          item_prototypes:
+            - uuid: 95e64c19f5f544628bb91fe054e9c0db
+              name: 'Last job failed (runner {#NAME})'
+              type: DEPENDENT
+              key: 'gitlabrunner.job.failed[{#NAME}]'
+              history: 1w
+              description: 'Last job has failed?'
+              preprocessing:
+                - type: PROMETHEUS_PATTERN
+                  parameters:
+                    - 'gitlab_runner_failed_jobs_total{runner="{#NAME}"}'
+                    - function
+                    - sum
+                - type: SIMPLE_CHANGE
+              master_item:
+                key: gitlabrunner.metrics
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: c738e27e9f00493fa0b8b2b208c31535
+              name: 'Last job finished (runner {#NAME})'
+              type: DEPENDENT
+              key: 'gitlabrunner.job.finished[{#NAME}]'
+              history: 1w
+              description: 'Last job has finished (regardless outcome)?'
+              preprocessing:
+                - type: PROMETHEUS_PATTERN
+                  parameters:
+                    - 'gitlab_runner_jobs_total{runner="{#NAME}"}'
+                    - function
+                    - sum
+                - type: SIMPLE_CHANGE
+              master_item:
+                key: gitlabrunner.metrics
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: 7d3b0c2a96e343409b44020bc2c33d47
+              name: 'Job queue (runner {#NAME})'
+              type: DEPENDENT
+              key: 'gitlabrunner.job.queue[{#NAME}]'
+              history: 1w
+              preprocessing:
+                - type: PROMETHEUS_TO_JSON
+                  parameters:
+                    - '{__name__=~"^(gitlab_runner_jobs_total|gitlab_runner_jobs|gitlab_runner_job_queue_duration_seconds_count)$"}'
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      const json = JSON.parse(value)
+                      if (json && Array.isArray(json)) {
+                          for (var i = 0; i < json.length; i++) {
+                              if (json[i].name === "gitlab_runner_jobs_total" && json[i].labels.runner === "{#NAME}") {
+                                  var alljobs = json[i].value;
+                              }
+                              if (json[i].name === "gitlab_runner_job_queue_duration_seconds_count" && json[i].labels.runner === "{#NAME}") {
+                                  var queue = json[i].value;
+                              }
+                              if (json[i].name === "gitlab_runner_jobs" && json[i].labels.runner === "{#NAME}") {
+                                  var running = json[i].value;
+                              }
+                          }
+                      }
+                      return queue - running - alljobs;
+                      
+                - type: IN_RANGE
+                  parameters:
+                    - '0'
+                    - ''
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: gitlabrunner.metrics
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: 831e33c05c69465a8a897c5b7199e8db
+              name: 'Last job failed running time (runner {#NAME})'
+              type: CALCULATED
+              key: 'gitlabrunner.job.runningtime.failed[{#NAME}]'
+              delay: 0;m/1s30
+              history: 1w
+              units: s
+              params: 'last(//gitlabrunner.job.failed[{#NAME}])*last(//gitlabrunner.job.runningtime[{#NAME}])'
+              description: 'Time to finish the job (failed outcome)'
+              preprocessing:
+                - type: IN_RANGE
+                  parameters:
+                    - '1'
+                    - ''
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: 594a7b97b85c40dbae198ca0b4a5ed4e
+              name: 'Last job succeeded running time (runner {#NAME})'
+              type: CALCULATED
+              key: 'gitlabrunner.job.runningtime.succeeded[{#NAME}]'
+              delay: 0;m/1s30
+              history: 1w
+              units: s
+              params: '(last(//gitlabrunner.job.finished[{#NAME}])-last(//gitlabrunner.job.failed[{#NAME}]))*last(//gitlabrunner.job.runningtime[{#NAME}])'
+              description: 'Time to finish the job (succeeded outcome)'
+              preprocessing:
+                - type: IN_RANGE
+                  parameters:
+                    - '1'
+                    - ''
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: 42b56b5b27884fb0a7e1b4ccaf498845
+              name: 'Last job running time (runner {#NAME})'
+              type: DEPENDENT
+              key: 'gitlabrunner.job.runningtime[{#NAME}]'
+              history: 1w
+              units: s
+              description: 'Time to finish the job (regardless outcome)'
+              preprocessing:
+                - type: PROMETHEUS_PATTERN
+                  parameters:
+                    - 'gitlab_runner_job_duration_seconds_sum{runner="{#NAME}"}'
+                    - function
+                    - sum
+                - type: SIMPLE_CHANGE
+                - type: IN_RANGE
+                  parameters:
+                    - '1'
+                    - ''
+                  error_handler: DISCARD_VALUE
+                - type: REGEX
+                  parameters:
+                    - '([0-9]+)'
+                    - \1
+              master_item:
+                key: gitlabrunner.metrics
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: 70e2750c25eb4d828ca88b40bbf6bc84
+              name: 'Job running (runner {#NAME})'
+              type: DEPENDENT
+              key: 'gitlabrunner.job.running[{#NAME}]'
+              history: 1w
+              preprocessing:
+                - type: PROMETHEUS_PATTERN
+                  parameters:
+                    - 'gitlab_runner_jobs{runner="{#NAME}",state="running"}'
+                    - function
+                    - sum
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+                - type: IN_RANGE
+                  parameters:
+                    - '0'
+                    - ''
+                  error_handler: DISCARD_VALUE
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: gitlabrunner.metrics
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+            - uuid: 4a0125a2c0f84c588b2da381bdca1767
+              name: 'Job stage (runner {#NAME})'
+              type: DEPENDENT
+              key: 'gitlabrunner.job.stage[{#NAME}]'
+              history: 1w
+              value_type: TEXT
+              preprocessing:
+                - type: PROMETHEUS_PATTERN
+                  parameters:
+                    - 'gitlab_runner_jobs{runner="{#NAME}",state="running"}'
+                    - label
+                    - stage
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: idle
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1d
+              master_item:
+                key: gitlabrunner.metrics
+              tags:
+                - tag: component
+                  value: gitlab-runner-job
+                - tag: gitlab-runner
+                  value: '{#NAME}'
+          master_item:
+            key: gitlabrunner.metrics
+          lld_macro_paths:
+            - lld_macro: '{#NAME}'
+              path: $.runner
+          preprocessing:
+            - type: PROMETHEUS_TO_JSON
+              parameters:
+                - gitlab_runner_jobs_total
+            - type: JSONPATH
+              parameters:
+                - '$.[*].labels'
+      tags:
+        - tag: class
+          value: application
+        - tag: target
+          value: gitlab
+      macros:
+        - macro: '{$GITLABRUNNER.METRICS.HOST}'
+        - macro: '{$GITLABRUNNER.METRICS.PORT}'
+          value: '9252'
+      valuemaps:
+        - uuid: 9e8017046f63427c8202340825a9bdb2
+          name: 'Jobs running'
+          mappings:
+            - type: GREATER_OR_EQUAL
+              value: '1'
+              newvalue: running
+            - value: '0'
+              newvalue: idle
